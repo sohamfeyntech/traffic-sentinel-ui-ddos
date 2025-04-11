@@ -6,6 +6,7 @@ import ControlPanel from "@/components/ControlPanel";
 import AlertBanner from "@/components/AlertBanner";
 import StatisticCard from "@/components/StatisticCard";
 import NetworkTopology from "@/components/NetworkTopology";
+import BlockedIPBadge from "@/components/BlockedIPBadge";
 
 // Utility function to get current time in HH:MM:SS format
 const getCurrentTime = () => {
@@ -23,10 +24,21 @@ const Index = () => {
   const [ddosActive, setDdosActive] = useState(false);
   const [detectionActive, setDetectionActive] = useState(false);
   const [attackDetected, setAttackDetected] = useState(false);
+  
+  // State for blocked IP
+  const [blockedIP, setBlockedIP] = useState<{
+    ip: string;
+    timestamp: string;
+    isBlocked: boolean;
+  }>({
+    ip: "",
+    timestamp: "",
+    isBlocked: false
+  });
 
   // Machine states
   const [attackerState, setAttackerState] = useState<{
-    status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected";
+    status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected" | "blocked";
     cpuUsage: number;
     networkUsage: number;
   }>({
@@ -144,12 +156,14 @@ const Index = () => {
         if (detectionActive && ddosActive && attackTraffic > detectionThreshold && !attackDetected) {
           setAttackDetected(true);
           setDetectionTime(new Date());
+          const currentTime = getCurrentTime();
+          
           setAlertInfo({
             visible: true,
             attackType: "SYN Flood DDoS",
             targetIp: "192.168.1.100",
             severity: "high",
-            timestamp: getCurrentTime()
+            timestamp: currentTime
           });
           
           // Update target machine status
@@ -157,6 +171,19 @@ const Index = () => {
             ...prev, 
             status: "protected"
           }));
+          
+          // Block the attacker's IP
+          setAttackerState(prev => ({
+            ...prev,
+            status: "blocked"
+          }));
+          
+          // Set blocked IP information
+          setBlockedIP({
+            ip: "192.168.1.50", // Attacker's IP
+            timestamp: currentTime,
+            isBlocked: true
+          });
         }
         
         // Keep only the latest 20 data points
@@ -295,6 +322,13 @@ const Index = () => {
     });
     
     setAlertInfo(prev => ({ ...prev, visible: false }));
+    
+    // Reset blocked IP
+    setBlockedIP({
+      ip: "",
+      timestamp: "",
+      isBlocked: false
+    });
     
     // Reset traffic data
     const initialData = Array.from({ length: 20 }, () => ({

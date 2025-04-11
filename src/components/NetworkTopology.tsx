@@ -7,7 +7,7 @@ interface Node {
   x: number;
   y: number;
   type: "attacker" | "target" | "router";
-  status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected";
+  status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected" | "blocked";
 }
 
 interface Edge {

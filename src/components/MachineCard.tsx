@@ -8,7 +8,7 @@ interface MachineCardProps {
   type: "attacker" | "target";
   name: string;
   ip: string;
-  status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected";
+  status: "idle" | "active" | "attacking" | "under-attack" | "detecting" | "protected" | "blocked";
   cpuUsage?: number;
   networkUsage?: number;
 }
@@ -35,6 +35,8 @@ const MachineCard = ({
         return "bg-yellow-500";
       case "protected":
         return "bg-blue-500";
+      case "blocked":
+        return "bg-red-600";
       default:
         return "bg-gray-400";
     }
@@ -54,6 +56,8 @@ const MachineCard = ({
         return "Detecting";
       case "protected":
         return "Protected";
+      case "blocked":
+        return "Blocked";
       default:
         return "Unknown";
     }
