@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -61,7 +62,26 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
-				}
+				},
+        // Cybersecurity-themed colors
+        cyber: {
+          blue: {
+            DEFAULT: '#3B82F6',
+            dark: '#1D4ED8',
+            light: '#60A5FA'
+          },
+          red: {
+            DEFAULT: '#EF4444',
+            dark: '#B91C1C',
+            light: '#F87171'
+          },
+          gray: {
+            DEFAULT: '#6B7280',
+            dark: '#1F2937',
+            darker: '#111827',
+            light: '#9CA3AF'
+          }
+        }
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
