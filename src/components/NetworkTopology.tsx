@@ -52,11 +52,23 @@ const NetworkTopology = ({ nodes, edges, attackActive, detectionActive }: Networ
           }))
           .filter(packet => packet.progress < 1);
           
-        // Add new packets if attack is active or normal traffic exists
-        if (attackActive || edges.some(e => e.trafficLevel > 0)) {
-          const activeEdges = edges.filter(e => attackActive ? true : e.trafficLevel > 0);
-          // More packets when attack is active
-          const newPacketsCount = attackActive ? Math.floor(Math.random() * 5) + 3 : Math.floor(Math.random() * 2) + 1;
+        // Add new packets if attack is active, or if attack was detected and is stopping, or for normal traffic
+        const isAttackStopping = !attackActive && edges.some(e => e.isAttack); // Check if attack is in stopping phase
+        if (attackActive || isAttackStopping || edges.some(e => e.trafficLevel > 0 && !e.isAttack)) {
+          // Consider edges that are part of an active attack, a stopping attack, or normal traffic
+          const activeEdges = edges.filter(e => e.isAttack || (!attackActive && e.trafficLevel > 0));
+          
+          // Adjust packet count based on state
+          let newPacketsCount = 0;
+          if (attackActive) { // Full attack
+            newPacketsCount = Math.floor(Math.random() * 5) + 3;
+          } else if (isAttackStopping) { // Attack stopping
+             // Generate fewer attack packets as it stops, based on max traffic level
+             const maxAttackLevel = Math.max(0, ...edges.filter(e => e.isAttack).map(e => e.trafficLevel));
+             newPacketsCount = Math.floor(Math.random() * (maxAttackLevel / 3)) + 1; // Fewer packets, scales down
+          } else { // Normal traffic only
+            newPacketsCount = Math.floor(Math.random() * 2) + 1;
+          }
           
           if (activeEdges.length > 0) {
             const newPackets = Array.from({ length: newPacketsCount }).map(() => {

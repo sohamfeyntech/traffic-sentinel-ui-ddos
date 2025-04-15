@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
+import { db } from "@/lib/firebase"; // Import Firestore instance
+import { collection, addDoc, Timestamp } from "firebase/firestore"; // Import Firestore functions
 import DashboardHeader from "@/components/DashboardHeader";
 import MachineCard from "@/components/MachineCard";
 import TrafficChart from "@/components/TrafficChart";
@@ -7,13 +9,33 @@ import AlertBanner from "@/components/AlertBanner";
 import StatisticCard from "@/components/StatisticCard";
 import NetworkTopology from "@/components/NetworkTopology";
 import BlockedIPBadge from "@/components/BlockedIPBadge";
+import AttackHistory from "@/components/AttackHistory"; // Import the new component
+import {
+  AlertDialog,
+  AlertDialogAction,
+  // AlertDialogCancel, // No longer needed if only using Action
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose // Import DialogClose if needed for a close button inside
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button"; // Import Button
+import { MaximizeIcon } from "lucide-react"; // Import an icon for the button
 
 // Utility function to get current time in HH:MM:SS format
 const getCurrentTime = () => {
   const now = new Date();
   return now.toTimeString().slice(0, 8);
 };
-
 // Generate random number between min and max
 const getRandomNumber = (min: number, max: number) => {
   return Math.floor(Math.random() * (max - min + 1) + min);
@@ -24,6 +46,8 @@ const Index = () => {
   const [ddosActive, setDdosActive] = useState(false);
   const [detectionActive, setDetectionActive] = useState(false);
   const [attackDetected, setAttackDetected] = useState(false);
+  const [showDetectionModal, setShowDetectionModal] = useState(false); // State for detection modal visibility
+  const [showChartModal, setShowChartModal] = useState(false); // State for chart modal visibility
   
   // State for blocked IP
   const [blockedIP, setBlockedIP] = useState<{
@@ -135,93 +159,170 @@ const Index = () => {
         const normalTraffic = getRandomNumber(10, 30);
         let attackTraffic = 0;
         
+        const lastDataPoint = prevData[prevData.length - 1];
+        const lastAttackTraffic = lastDataPoint?.attack || 0;
+
         if (ddosActive) {
-          // Gradually increase attack traffic
-          const lastAttackTraffic = prevData[prevData.length - 1]?.attack || 0;
-          if (lastAttackTraffic < 200) {
-            attackTraffic = lastAttackTraffic + getRandomNumber(10, 25);
+          if (attackDetected) {
+            // Attack detected and blocked - gradually decrease attack traffic
+            attackTraffic = Math.max(0, lastAttackTraffic - getRandomNumber(20, 40));
           } else {
-            attackTraffic = lastAttackTraffic + getRandomNumber(-10, 10);
+            // Attack ongoing, not yet detected - increase or maintain attack traffic
+            if (lastAttackTraffic < 200) {
+              attackTraffic = lastAttackTraffic + getRandomNumber(10, 25);
+            } else {
+              attackTraffic = lastAttackTraffic + getRandomNumber(-10, 10); // Fluctuate around peak
+            }
+            attackTraffic = Math.max(0, attackTraffic); // Ensure it doesn't go below 0
           }
         }
-        
+
         const newDataPoint = {
           time: getCurrentTime(),
           normal: normalTraffic,
-          ...(ddosActive && { attack: attackTraffic }),
+          // Only include attack traffic if ddos is active OR if it was active and is now decreasing
+          ...((ddosActive || (lastAttackTraffic > 0 && attackDetected)) && { attack: attackTraffic }),
           ...(detectionActive && { threshold: detectionThreshold })
         };
         
         // Check if the attack should be detected
         if (detectionActive && ddosActive && attackTraffic > detectionThreshold && !attackDetected) {
           setAttackDetected(true);
-          setDetectionTime(new Date());
-          const currentTime = getCurrentTime();
-          
-          setAlertInfo({
+          setShowDetectionModal(true); // Show the modal on detection
+          const detectionTimestamp = new Date(); // Capture detection time precisely
+          setDetectionTime(detectionTimestamp);
+          const currentTime = getCurrentTime(); // For display purposes
+
+          const currentAlertInfo = {
             visible: true,
             attackType: "SYN Flood DDoS",
             targetIp: "192.168.1.100",
-            severity: "high",
+            severity: "high" as const,
             timestamp: currentTime
-          });
-          
+          };
+          setAlertInfo(currentAlertInfo);
+
           // Update target machine status
           setTargetState(prev => ({
-            ...prev, 
+            ...prev,
             status: "protected"
           }));
-          
+
           // Block the attacker's IP
           setAttackerState(prev => ({
             ...prev,
             status: "blocked"
           }));
-          
+
           // Set blocked IP information
-          setBlockedIP({
+          const blockedIpInfo = {
             ip: "192.168.1.50", // Attacker's IP
-            timestamp: currentTime,
+            timestamp: currentTime, // Use display time here
             isBlocked: true
-          });
+          };
+          setBlockedIP(blockedIpInfo);
+
+          // --- Save attack data to Firestore ---
+          const saveAttackData = async () => {
+            // Calculate detection time elapsed *before* saving
+            let elapsedSeconds = null;
+            if (simulationStartTime) {
+               const elapsedMs = detectionTimestamp.getTime() - simulationStartTime.getTime();
+               elapsedSeconds = parseFloat((elapsedMs / 1000).toFixed(2));
+            }
+
+            try {
+              const attackData = {
+                timestamp: Timestamp.fromDate(detectionTimestamp), // Use precise Firestore Timestamp
+                attackType: currentAlertInfo.attackType,
+                targetIp: currentAlertInfo.targetIp,
+                attackerIp: blockedIpInfo.ip,
+                severity: currentAlertInfo.severity,
+                detectionTimeElapsed: elapsedSeconds, // Save calculated elapsed time
+              };
+              await addDoc(collection(db, "attacks"), attackData);
+              console.log("Attack data saved to Firestore:", attackData);
+            } catch (error) {
+              console.error("Error saving attack data to Firestore: ", error);
+            }
+          };
+          saveAttackData();
+          // --- End Firestore save ---
+
+          // Automatically stop the DDoS attack simulation when detected
+          setDdosActive(false);
         }
         
         // Keep only the latest 20 data points
         return [...prevData.slice(-19), newDataPoint];
       });
       
-      // Update machine states
+      // Update machine states based on attack status
       if (ddosActive) {
-        setAttackerState(prev => ({
-          status: "attacking",
-          cpuUsage: Math.min(95, prev.cpuUsage + getRandomNumber(1, 3)),
-          networkUsage: Math.min(98, prev.networkUsage + getRandomNumber(2, 5))
-        }));
-        
-        if (!attackDetected) {
+        if (attackDetected) {
+          // Attack detected: Attacker is blocked, Target recovers
+          setAttackerState(prev => ({
+            status: "blocked", // Keep status as blocked
+            cpuUsage: Math.max(5, prev.cpuUsage - getRandomNumber(2, 5)), // Decrease usage
+            networkUsage: Math.max(2, prev.networkUsage - getRandomNumber(3, 7)) // Decrease usage
+          }));
+          setTargetState(prev => ({
+            status: "protected", // Keep status as protected
+            cpuUsage: Math.max(20, prev.cpuUsage - getRandomNumber(4, 8)), // Recover usage
+            networkUsage: Math.max(15, prev.networkUsage - getRandomNumber(6, 12)) // Recover usage
+          }));
+        } else {
+          // Attack ongoing, not detected: Attacker attacks, Target is under attack
+          setAttackerState(prev => ({
+            status: "attacking",
+            cpuUsage: Math.min(95, prev.cpuUsage + getRandomNumber(1, 3)),
+            networkUsage: Math.min(98, prev.networkUsage + getRandomNumber(2, 5))
+          }));
           setTargetState(prev => ({
             status: "under-attack",
             cpuUsage: Math.min(100, prev.cpuUsage + getRandomNumber(3, 7)),
             networkUsage: Math.min(100, prev.networkUsage + getRandomNumber(5, 10))
           }));
         }
+      } else if (attackDetected) {
+          // DDoS stopped manually AFTER detection, ensure recovery continues/completes
+          setAttackerState(prev => ({
+            status: "blocked", // Remain blocked until reset
+            cpuUsage: Math.max(5, prev.cpuUsage - getRandomNumber(2, 5)),
+            networkUsage: Math.max(2, prev.networkUsage - getRandomNumber(3, 7))
+          }));
+          setTargetState(prev => ({
+            status: "protected", // Remain protected until reset
+            cpuUsage: Math.max(20, prev.cpuUsage - getRandomNumber(4, 8)),
+            networkUsage: Math.max(15, prev.networkUsage - getRandomNumber(6, 12))
+          }));
       }
       
-      // Update topology edges
-      setTopologyEdges([
-        { 
-          source: "attacker1", 
-          target: "router1", 
-          trafficLevel: ddosActive ? getRandomNumber(7, 10) : getRandomNumber(0, 1), 
-          isAttack: ddosActive 
-        },
-        { 
-          source: "router1", 
-          target: "target1", 
-          trafficLevel: ddosActive ? getRandomNumber(7, 10) : getRandomNumber(0, 1), 
-          isAttack: ddosActive 
+      // Update topology edges based on attack status
+      setTopologyEdges(prevEdges => {
+        const currentAttackTraffic = trafficData[trafficData.length - 1]?.attack ?? 0;
+        let attackTrafficLevel = 0;
+        if (ddosActive || (attackDetected && currentAttackTraffic > 0)) {
+           // Scale traffic level roughly based on actual attack traffic (0-10 scale)
+           attackTrafficLevel = Math.min(10, Math.max(0, Math.ceil(currentAttackTraffic / 25)));
         }
-      ]);
+        
+        return [
+          {
+            source: "attacker1",
+            target: "router1",
+            // Show decreasing traffic level even if ddosActive is false but attack was detected
+            trafficLevel: attackTrafficLevel,
+            isAttack: ddosActive || (attackDetected && currentAttackTraffic > 0)
+          },
+          {
+            source: "router1",
+            target: "target1",
+            trafficLevel: attackTrafficLevel,
+            isAttack: ddosActive || (attackDetected && currentAttackTraffic > 0)
+          }
+        ];
+      });
     }, 1000);
     
     return () => clearInterval(interval);
@@ -349,9 +450,12 @@ const Index = () => {
       <DashboardHeader />
       
       <main className="container mx-auto px-4 py-6">
-        {/* Alert Banner */}
-        <div className="mb-6">
+        {/* Alert Banner & Blocked IP */}
+        <div className="mb-6 space-y-2"> {/* Group alert and badge with consistent spacing */}
           <AlertBanner {...alertInfo} />
+          {blockedIP.isBlocked && (
+             <BlockedIPBadge ip={blockedIP.ip} timestamp={blockedIP.timestamp} />
+          )}
         </div>
         
         {/* Control Panel */}
@@ -395,7 +499,7 @@ const Index = () => {
         {/* Network Visualization */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Machine Cards */}
-          <div className="space-y-4">
+          <div className="space-y-4"> {/* Column 1: Machines */}
             <h2 className="text-xl font-semibold mb-2">Network Machines</h2>
             <MachineCard
               type="attacker"
@@ -415,9 +519,20 @@ const Index = () => {
             />
           </div>
           
-          {/* Network Topology */}
+          {/* Column 2: Topology */}
           <div className="flex flex-col">
-            <h2 className="text-xl font-semibold mb-2">Network Topology</h2>
+             <div className="flex justify-between items-center mb-2"> {/* Ensure title has bottom margin */}
+               <h2 className="text-xl font-semibold">Network Topology</h2>
+               <Button
+                 variant="outline"
+                 size="sm"
+                 onClick={() => setShowChartModal(true)}
+                 className="border-blue-500 text-blue-400 hover:bg-blue-900/50 hover:text-blue-300"
+               >
+                 <MaximizeIcon className="h-4 w-4 mr-1" />
+                 Expand Chart
+               </Button>
+             </div>
             <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 h-full">
               <NetworkTopology 
                 nodes={topologyNodes} 
@@ -428,15 +543,15 @@ const Index = () => {
             </div>
           </div>
           
-          {/* Traffic Chart */}
+          {/* Column 3: Traffic Chart */}
           <div className="lg:col-span-1">
-            <h2 className="text-xl font-semibold mb-2">Traffic Analysis</h2>
+            <h2 className="text-xl font-semibold mb-2">Traffic Analysis</h2> {/* Ensure title has bottom margin */}
             <TrafficChart data={trafficData} attackDetected={attackDetected} />
           </div>
         </div>
         
-        {/* Technical Details Section */}
-        <div className="bg-gray-900 rounded-lg border border-gray-800 p-6">
+        {/* Technical Details Section - Ensure consistent top margin */}
+        <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 mt-6">
           <h2 className="text-xl font-semibold mb-4">DDoS Attack Information</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -461,6 +576,55 @@ const Index = () => {
             </div>
           </div>
         </div>
+
+        {/* Attack History */}
+        <div className="mt-6"> {/* Add margin top */}
+          <AttackHistory />
+        </div>
+
+        {/* Attack Detection Modal */}
+        <AlertDialog open={showDetectionModal} onOpenChange={setShowDetectionModal}>
+          <AlertDialogContent className="bg-gray-800 border-red-500 text-white">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-red-400">🚨 Attack Detected!</AlertDialogTitle>
+              <AlertDialogDescription className="text-gray-300">
+                Abnormal traffic pattern detected exceeding the defined threshold.
+                <br />
+                Attack Type: {alertInfo.attackType}
+                <br />
+                Target IP: {alertInfo.targetIp}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div>
+              <h4 className="font-semibold mb-2 text-blue-400">Mitigation Action:</h4>
+              <p className="text-gray-300">
+                The suspected attacker IP address (<code className="bg-gray-700 px-1 rounded">{blockedIP.ip}</code>) has been automatically blocked to protect the target server.
+              </p>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogAction className="bg-blue-600 hover:bg-blue-700">Acknowledge</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Traffic Chart Modal */}
+        <Dialog open={showChartModal} onOpenChange={setShowChartModal}>
+          <DialogContent className="bg-gray-900 border-gray-700 text-white sm:max-w-[80vw] h-[80vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="text-blue-400">Traffic Analysis (Expanded)</DialogTitle>
+            </DialogHeader>
+            <div className="flex-grow overflow-hidden p-4">
+              {/* Added padding and flex-grow */}
+              <TrafficChart data={trafficData} attackDetected={attackDetected} />
+            </div>
+             {/* Optional: Add a close button if needed, otherwise clicking outside closes it */}
+             {/* <DialogFooter>
+               <DialogClose asChild>
+                 <Button type="button" variant="secondary">Close</Button>
+               </DialogClose>
+             </DialogFooter> */}
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

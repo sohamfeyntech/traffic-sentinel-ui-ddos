@@ -39,7 +39,7 @@ const ControlPanel = ({
       
       <Button
         variant="outline"
-        className="flex-1 border-gray-600 hover:border-gray-500 hover:bg-gray-700"
+        className="flex-1 border-gray-600 text-gray-300 hover:text-white hover:border-gray-500 hover:bg-gray-700"
         onClick={onReset}
       >
         <RotateCw className="mr-2 h-4 w-4" />
